@@ -20,6 +20,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -185,5 +186,64 @@ public class ScoredDocsFuserTest extends StdOutStdErrRedirectableLuceneTestCase 
     assertEquals("query2 doc1 RRF score (rank 1)", 1.0f / 61.0f, run.scores[3], 0.0001f);
     assertEquals("query2 doc2 RRF score (rank 2)", 1.0f / 62.0f, run.scores[4], 0.0001f);
     assertEquals("query2 doc3 RRF score (rank 3)", 1.0f / 63.0f, run.scores[5], 0.0001f);
+  }
+
+  @Test
+  public void testResortReassignsRanks() throws Exception {
+    // Ranks in the file (1, 2, 3) disagree with the score order (doc1 7.0, doc2 6.0, doc3 5.0).
+    Path path = Paths.get("src/test/resources/sample_runs/run_unsorted");
+
+    ScoredDocs run = ScoredDocsFuser.readRun(path, true);
+    assertArrayEquals(new String[]{"doc1", "doc2", "doc3"}, run.docids);
+    assertArrayEquals(new int[]{1, 2, 3}, run.lucene_docids);
+
+    // RRF should therefore follow the score order, not the original ranks.
+    ScoredDocsFuser.rescore(ScoredDocsFuser.RescoreMethod.RRF, 60, 0, run);
+    assertEquals(1.0f / 61.0f, run.scores[0], 0.0001f);
+    assertEquals(1.0f / 63.0f, run.scores[2], 0.0001f);
+
+    // Without resorting, the original order and ranks are kept.
+    run = ScoredDocsFuser.readRun(path, false);
+    assertArrayEquals(new String[]{"doc3", "doc1", "doc2"}, run.docids);
+    assertArrayEquals(new int[]{1, 2, 3}, run.lucene_docids);
+  }
+
+  @Test
+  public void testMergeDepth() throws Exception {
+    List<ScoredDocs> runs = new ArrayList<>();
+    runs.add(ScoredDocsFuser.readRun(Paths.get("src/test/resources/sample_runs/run1"), false));
+    runs.add(ScoredDocsFuser.readRun(Paths.get("src/test/resources/sample_runs/run2"), false));
+
+    // With depth 1, only the top result of each run per topic is considered.
+    ScoredDocs merged = ScoredDocsFuser.merge(runs, 1, 1000);
+    Path newPath = Paths.get("runs/merged_depth_run");
+    ScoredDocsFuser.saveToTxt(newPath, "Anserini", merged);
+    TestUtils.checkFile("runs/merged_depth_run", new String[]{
+      "query1 Q0 doc1 1 7.000000 Anserini",
+      "query1 Q0 doc2 2 5.000000 Anserini",
+      "query2 Q0 doc1 1 14.000000 Anserini",
+      "query2 Q0 doc3 2 9.000000 Anserini"
+    });
+    assertTrue(new File("runs/merged_depth_run").delete());
+
+    // A null depth considers all results.
+    merged = ScoredDocsFuser.merge(runs, null, null);
+    assertEquals(9, merged.docids.length);
+  }
+
+  @Test
+  public void testMergeBreaksTiesByDocid() throws Exception {
+    List<ScoredDocs> runs = new ArrayList<>();
+    runs.add(ScoredDocsFuser.readRun(Paths.get("src/test/resources/sample_runs/run1"), false));
+    runs.add(ScoredDocsFuser.readRun(Paths.get("src/test/resources/sample_runs/run2"), false));
+    for (ScoredDocs run : runs) {
+      ScoredDocsFuser.rescore(ScoredDocsFuser.RescoreMethod.RRF, 60, 0, run);
+    }
+
+    // query1: doc1 and doc2 tie (1/61 + 1/62), as do doc3 and doc4 (1/63).
+    ScoredDocs merged = ScoredDocsFuser.merge(runs, 1000, 1000);
+    ScoredDocsFuser.sortScoredDocs(merged);
+    assertArrayEquals(new String[]{"doc1", "doc2", "doc3", "doc4"},
+        Arrays.copyOfRange(merged.docids, 0, 4));
   }
 }

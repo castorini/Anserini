@@ -22,7 +22,6 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -87,6 +86,16 @@ public class ScoredDocsFuser {
   
     if (reSort) {
       ScoredDocsFuser.sortScoredDocs(scoredDocs);
+
+      // Reassign ranks to match the new sort order; otherwise RRF would still use the ranks from the file.
+      String prevTopic = null;
+      int rankInTopic = 0;
+      for (int i = 0; i < scoredDocs.lucene_documents.length; i++) {
+        String topic = scoredDocs.lucene_documents[i].get(TOPIC);
+        rankInTopic = topic.equals(prevTopic) ? rankInTopic + 1 : 1;
+        scoredDocs.lucene_docids[i] = rankInTopic;
+        prevTopic = topic;
+      }
     }
 
     return scoredDocs;
@@ -179,29 +188,31 @@ public class ScoredDocsFuser {
       throw new IllegalArgumentException("Merge requires at least 2 runs.");
     }
 
-    // for every topic, produce a map of docid to score, num of accumulated
-    HashMap<String, HashMap<String, AbstractMap.SimpleEntry<Float, Integer>>> docScores = new HashMap<>();
+    // for every topic, produce a map of docid to summed score
+    HashMap<String, HashMap<String, Float>> docScores = new HashMap<>();
     for (ScoredDocs run : runs) {
+      // number of results consumed so far from this run, per topic; only the first depth results are considered
+      HashMap<String, Integer> numConsumed = new HashMap<>();
       for (int i = 0; i < run.lucene_documents.length; i++) {
         String query = run.lucene_documents[i].get(TOPIC);
-        String docid = run.docids[i];
-        Float score = run.scores[i];
+        int consumed = numConsumed.merge(query, 1, Integer::sum);
+        if (depth != null && consumed > depth) {
+          continue;
+        }
         docScores.computeIfAbsent(query, key -> new HashMap<>())
-          .merge(docid, new AbstractMap.SimpleEntry<>(score, 1), 
-                (existing, newValue) -> 
-                  existing.getValue() >= depth ? existing : new AbstractMap.SimpleEntry<>(existing.getKey() + newValue.getKey(), existing.getValue() + 1));
+          .merge(run.docids[i], run.scores[i], Float::sum);
       }
     }
-    
+
     List<Document> lucene_documents = new ArrayList<>(); // topic
     List<String> docids = new ArrayList<>(); // docid
     List<Float> score = new ArrayList<>(); // score
     List<Integer> rank = new ArrayList<>(); // rank
     for (String query : docScores.keySet()) {
-      // for the current query, a list of all docids and scores, sorted by scores
+      // for the current query, a list of all docids and scores, sorted by scores (ties broken by docid)
       List<Map.Entry<String, Float>> sortedDocScores = docScores.get(query).entrySet().stream()
-        .map(entry -> Map.entry(entry.getKey(), entry.getValue().getKey()))
-        .sorted(Map.Entry.<String, Float>comparingByValue().reversed())
+        .sorted(Map.Entry.<String, Float>comparingByValue().reversed()
+            .thenComparing(Map.Entry.comparingByKey()))
         .limit(k != null ? k : Integer.MAX_VALUE)
         .collect(Collectors.toList());
 
