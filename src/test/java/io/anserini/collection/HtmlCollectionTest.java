@@ -20,6 +20,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Iterator;
@@ -28,7 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
 
-// Since the CACM collection is checked into our repo, we can directly test against it.
 public class HtmlCollectionTest {
 
   @Test
@@ -56,6 +60,27 @@ public class HtmlCollectionTest {
       docIter.forEachRemaining(d -> cnt.getAndIncrement());
     }
     assertEquals(3204, cnt.get());
+  }
+
+  @Test
+  public void testReadCompressedSegmentOverHttp() throws IOException, InterruptedException {
+    URI uri = URI.create("https://rgw.cs.uwaterloo.ca/pyserini/collections/cacm/cacm.tar.gz");
+
+    HttpClient client = HttpClient.newHttpClient();
+    HttpRequest request = HttpRequest.newBuilder(uri).GET().build();
+    HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+    assertEquals(200, response.statusCode());
+
+    long bytes = 0L;
+    byte[] buffer = new byte[1024 * 1024];
+    try (InputStream in = response.body()) {
+      int read;
+      while ((read = in.read(buffer)) != -1) {
+        bytes += read;
+      }
+    }
+
+    assertEquals(808000, bytes);
   }
 
 }

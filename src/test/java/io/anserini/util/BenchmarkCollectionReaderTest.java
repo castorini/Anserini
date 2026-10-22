@@ -40,6 +40,7 @@ public class BenchmarkCollectionReaderTest {
 
     reader.run();
     assertEquals(2, reader.getTotalRecordCount());
+    assertEquals(1, reader.getCompletedTaskCount());
   }
 
   @Test
@@ -53,5 +54,6 @@ public class BenchmarkCollectionReaderTest {
 
     reader.run();
     assertEquals(3204, reader.getTotalRecordCount());
+    assertEquals(1, reader.getCompletedTaskCount());
   }
 }

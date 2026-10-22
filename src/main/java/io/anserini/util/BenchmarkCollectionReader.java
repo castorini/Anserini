@@ -104,6 +104,7 @@ public final class BenchmarkCollectionReader {
   private final Class<?> collectionClass;
   private final DocumentCollection<?> collection;
   private final LongAdder totalRecordCount = new LongAdder();
+  private final AtomicInteger completedTaskCount = new AtomicInteger();
 
   public BenchmarkCollectionReader(Args args) throws Exception {
     this.args = args;
@@ -127,10 +128,10 @@ public final class BenchmarkCollectionReader {
     final long start = System.nanoTime();
     LOG.info("Starting MapCollections...");
     totalRecordCount.reset();
+    completedTaskCount.set(0);
 
     final List<?> segmentPaths = collection.getSegmentPaths();
     final int segmentCnt = segmentPaths.size();
-    AtomicInteger completedTaskCount = new AtomicInteger(0);
 
     LOG.info(String.format("%d files found in %s", segmentCnt, collectionPath));
 
@@ -147,9 +148,8 @@ public final class BenchmarkCollectionReader {
     }
 
     // Work-stealing executor + progress logger
-    try (
-        ExecutorService executor = Executors.newWorkStealingPool(args.threads);
-        ScheduledExecutorService monitor = Executors.newSingleThreadScheduledExecutor()) {
+    try (ExecutorService executor = Executors.newWorkStealingPool(args.threads);
+         ScheduledExecutorService monitor = Executors.newSingleThreadScheduledExecutor()) {
       // log progress every minute
       monitor.scheduleAtFixedRate(() -> {
         double pct = (double) completedTaskCount.get() / segmentCnt * 100.0d;
@@ -163,6 +163,7 @@ public final class BenchmarkCollectionReader {
       Thread.currentThread().interrupt();
     }
 
+    LOG.info("Total tasks completed: {}", completedTaskCount.get());
     LOG.info("Total records processed: {}", String.format(Locale.US, "%,d", totalRecordCount.sum()));
 
     if (segmentCnt != completedTaskCount.get()) {
@@ -175,6 +176,10 @@ public final class BenchmarkCollectionReader {
 
   public long getTotalRecordCount() {
     return totalRecordCount.sum();
+  }
+
+  public int getCompletedTaskCount() {
+    return completedTaskCount.get();
   }
 
   public static void main(String[] args) throws Exception {
